@@ -277,7 +277,7 @@ def run_with_configs(global_config: GlobalConfig, user_configs: Sequence[UserCon
             if result == 0:
                 first_user = user_configs[0] if user_configs else None
                 if first_user and (
-                    first_user.auth_only or first_user.list_albums or first_user.list_libraries
+                    first_user.auth_only or first_user.list_albums or first_user.list_folders or first_user.list_libraries
                 ):
                     return 0
 
@@ -921,6 +921,9 @@ def core_single_run(
             # turn off response capture
             icloud.response_observer = None
 
+            # Store iCloud service for web UI API access
+            status_exchange.set_icloud_service(icloud)
+
             if user_config.auth_only:
                 logger.info("Authentication completed successfully")
                 return 0
@@ -952,7 +955,21 @@ def core_single_run(
                     album_titles = [str(a) for a in library_object.albums.values()]
                     print(*album_titles, sep="\n")
                     return 0
+                elif user_config.list_folders:
+                    print("Folders:")
+                    folder_titles = [str(f) for f in library_object.folders.values()]
+                    print(*folder_titles, sep="\n")
+                    return 0
                 else:
+                    # Check for download request from web UI (this overrides CLI config)
+                    download_request = status_exchange.get_download_request()
+                    if download_request:
+                        user_config.directory = download_request.get("directory")
+                        user_config.folders = download_request.get("folders", [])
+                        user_config.albums = download_request.get("albums", [])
+                        user_config.library = download_request.get("library", "PrimarySync")
+                        logger.info(f"Processing download request from web UI: folders={user_config.folders}, albums={user_config.albums}, directory={user_config.directory}")
+
                     if not user_config.directory:
                         # should be checked upstream
                         raise NotImplementedError()
@@ -965,20 +982,40 @@ def core_single_run(
                         photo_video_phrase = "photos" if user_config.skip_videos else "videos"
                     else:
                         photo_video_phrase = "photos and videos"
-                    if len(user_config.albums) == 0:
-                        album_phrase = ""
-                    elif len(user_config.albums) == 1:
-                        album_phrase = f" from album {','.join(user_config.albums)}"
+                    
+                    # Determine what to download: folders take precedence if specified
+                    selected_items: Sequence[str] = []
+                    item_type = ""
+                    if len(user_config.folders) > 0:
+                        selected_items = user_config.folders
+                        item_type = "folder"
+                    elif len(user_config.albums) > 0:
+                        selected_items = user_config.albums
+                        item_type = "album"
+                    
+                    if len(selected_items) == 0:
+                        item_phrase = ""
+                    elif len(selected_items) == 1:
+                        item_phrase = f" from {item_type} {','.join(selected_items)}"
                     else:
-                        album_phrase = f" from albums {','.join(user_config.albums)}"
+                        item_phrase = f" from {item_type}s {','.join(selected_items)}"
 
-                    logger.debug(f"Looking up all {photo_video_phrase}{album_phrase}...")
+                    logger.debug(f"Looking up all {photo_video_phrase}{item_phrase}...")
 
-                    albums: Iterable[PhotoAlbum] = (
-                        list(map_(library_object.albums.__getitem__, user_config.albums))
-                        if len(user_config.albums) > 0
-                        else [library_object.all]
-                    )
+                    # Select albums or folders based on what was specified
+                    if len(user_config.folders) > 0:
+                        # Download from specified folders
+                        albums: Iterable[PhotoAlbum] = list(
+                            map_(library_object.folders.__getitem__, user_config.folders)
+                        )
+                    elif len(user_config.albums) > 0:
+                        # Download from specified albums
+                        albums: Iterable[PhotoAlbum] = list(
+                            map_(library_object.albums.__getitem__, user_config.albums)
+                        )
+                    else:
+                        # Download everything
+                        albums: Iterable[PhotoAlbum] = [library_object.all]
                     album_lengths: Callable[[Iterable[PhotoAlbum]], Iterable[int]] = partial_1_1(
                         map_, len
                     )

@@ -121,3 +121,26 @@ class StatusExchange:
     def clear_current_user(self) -> None:
         with self.lock:
             self._current_user = None
+
+    def set_icloud_service(self, service) -> None:
+        """Store the authenticated iCloud service for API access"""
+        with self.lock:
+            self._icloud_service = service
+
+    def get_icloud_service(self):
+        """Get the authenticated iCloud service"""
+        with self.lock:
+            return getattr(self, "_icloud_service", None)
+
+    def set_download_request(self, request_data: dict) -> None:
+        """Store a download request from the web UI"""
+        with self.lock:
+            self._download_request = request_data
+
+    def get_download_request(self) -> dict | None:
+        """Get and clear the download request"""
+        with self.lock:
+            request = getattr(self, "_download_request", None)
+            if hasattr(self, "_download_request"):
+                delattr(self, "_download_request")
+            return request

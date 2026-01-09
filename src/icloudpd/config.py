@@ -23,6 +23,8 @@ class _DefaultConfig:
     until_found: int | None
     albums: Sequence[str]
     list_albums: bool
+    folders: Sequence[str]
+    list_folders: bool
     library: str
     list_libraries: bool
     skip_videos: bool

@@ -95,6 +95,19 @@ def add_options_for_user(parser: argparse.ArgumentParser) -> argparse.ArgumentPa
         action="store_true",
     )
     cloned.add_argument(
+        "-f",
+        "--folder",
+        help="Folder(s) to download from iCloud",
+        action="append",
+        default=[],
+        dest="folders",
+    )
+    cloned.add_argument(
+        "--list-folders",
+        help="List the available folders",
+        action="store_true",
+    )
+    cloned.add_argument(
         "--library",
         help="Library to download. Default: %(default)s",
         default="PrimarySync",
@@ -443,6 +456,8 @@ def map_to_config(user_ns: argparse.Namespace) -> UserConfig:
         until_found=user_ns.until_found,
         albums=user_ns.albums,
         list_albums=user_ns.list_albums,
+        folders=user_ns.folders,
+        list_folders=user_ns.list_folders,
         library=user_ns.library,
         list_libraries=user_ns.list_libraries,
         skip_videos=user_ns.skip_videos,
@@ -564,12 +579,13 @@ def cli() -> int:
             user_ns
             for user_ns in user_nses
             if not user_ns.list_albums
+            and not user_ns.list_folders
             and not user_ns.list_libraries
             and not user_ns.directory
             and not user_ns.auth_only
         ]:
             print(
-                "--auth-only, --directory, --list-libraries, or --list-albums are required for each configuration"
+                "--auth-only, --directory, --list-libraries, --list-albums, or --list-folders are required for each configuration"
             )
             return 2
 
@@ -597,12 +613,12 @@ def cli() -> int:
             [
                 user_ns
                 for user_ns in user_nses
-                if user_ns.list_albums or user_ns.auth_only or user_ns.list_libraries
+                if user_ns.list_albums or user_ns.list_folders or user_ns.auth_only or user_ns.list_libraries
             ]
             or global_ns.only_print_filenames
         ):
             print(
-                "--watch-with-interval is not compatible with --list-albums, --list-libraries, --only-print-filenames, and --auth-only"
+                "--watch-with-interval is not compatible with --list-albums, --list-folders, --list-libraries, --only-print-filenames, and --auth-only"
             )
             return 2
         else:

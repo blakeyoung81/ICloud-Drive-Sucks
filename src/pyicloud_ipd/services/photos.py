@@ -301,19 +301,9 @@ class PhotoLibrary:
             )
 
     @property
-    def albums(self) -> Dict[str, "PhotoAlbum"]:
-        albums = {
-            name: PhotoAlbum(
-                self.params,
-                self.session,
-                self.service_endpoint,
-                name,
-                zone_id=self.zone_id,
-                **props,
-            )  # type: ignore[arg-type] # dynamically builing params
-            for (name, props) in self.SMART_FOLDERS.items()
-        }
-
+    def folders(self) -> Dict[str, "PhotoAlbum"]:
+        """Returns only user-created folders (not smart albums)"""
+        folders_dict = {}
         for folder in self._fetch_folders():
             # FIXME: Handle subfolders
             if folder["recordName"] in ("----Root-Folder----", "----Project-Root-Folder----") or (
@@ -344,7 +334,26 @@ class PhotoLibrary:
                 query_filter,
                 zone_id=self.zone_id,
             )
-            albums[folder_name] = album
+            folders_dict[folder_name] = album
+
+        return folders_dict
+
+    @property
+    def albums(self) -> Dict[str, "PhotoAlbum"]:
+        albums = {
+            name: PhotoAlbum(
+                self.params,
+                self.session,
+                self.service_endpoint,
+                name,
+                zone_id=self.zone_id,
+                **props,
+            )  # type: ignore[arg-type] # dynamically builing params
+            for (name, props) in self.SMART_FOLDERS.items()
+        }
+
+        # Add folders to albums as well (for backward compatibility)
+        albums.update(self.folders)
 
         return albums
 

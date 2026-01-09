@@ -1,9 +1,11 @@
 import os
 import sys
+import json
+import threading
 from logging import Logger
 
 import waitress
-from flask import Flask, Response, make_response, render_template, request
+from flask import Flask, Response, jsonify, make_response, render_template, request
 
 from icloudpd.status import Status, StatusExchange
 
@@ -87,6 +89,105 @@ def serve_app(logger: Logger, _status_exchange: StatusExchange) -> None:
     def cancel() -> Response | str:
         _status_exchange.get_progress().cancel = True
         return make_response("Ok", 200)
+
+    @app.route("/browser")
+    def browser() -> Response | str:
+        """Folder browser UI page"""
+        return render_template("browser.html")
+
+    @app.route("/api/folders", methods=["GET"])
+    def list_folders() -> Response:
+        """API endpoint to list available folders"""
+        try:
+            icloud_service = _status_exchange.get_icloud_service()
+            if not icloud_service:
+                return jsonify({"error": "Not authenticated"}), 401
+
+            library_name = request.args.get("library", "PrimarySync")
+            if library_name in icloud_service.photos.private_libraries:
+                library = icloud_service.photos.private_libraries[library_name]
+            elif library_name in icloud_service.photos.shared_libraries:
+                library = icloud_service.photos.shared_libraries[library_name]
+            else:
+                library = icloud_service.photos
+
+            folders = library.folders
+            folder_list = [{"name": name, "count": len(album)} for name, album in folders.items()]
+            return jsonify({"folders": folder_list})
+        except Exception as e:
+            logger.error(f"Error listing folders: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/albums", methods=["GET"])
+    def list_albums() -> Response:
+        """API endpoint to list available albums"""
+        try:
+            icloud_service = _status_exchange.get_icloud_service()
+            if not icloud_service:
+                return jsonify({"error": "Not authenticated"}), 401
+
+            library_name = request.args.get("library", "PrimarySync")
+            if library_name in icloud_service.photos.private_libraries:
+                library = icloud_service.photos.private_libraries[library_name]
+            elif library_name in icloud_service.photos.shared_libraries:
+                library = icloud_service.photos.shared_libraries[library_name]
+            else:
+                library = icloud_service.photos
+
+            albums = library.albums
+            album_list = [{"name": name, "count": len(album)} for name, album in albums.items()]
+            return jsonify({"albums": album_list})
+        except Exception as e:
+            logger.error(f"Error listing albums: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/libraries", methods=["GET"])
+    def list_libraries() -> Response:
+        """API endpoint to list available libraries"""
+        try:
+            icloud_service = _status_exchange.get_icloud_service()
+            if not icloud_service:
+                return jsonify({"error": "Not authenticated"}), 401
+
+            private_libs = list(icloud_service.photos.private_libraries.keys())
+            shared_libs = list(icloud_service.photos.shared_libraries.keys())
+            return jsonify({"private": private_libs, "shared": shared_libs})
+        except Exception as e:
+            logger.error(f"Error listing libraries: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/download", methods=["POST"])
+    def start_download() -> Response:
+        """API endpoint to start a download"""
+        try:
+            data = request.get_json()
+            folders = data.get("folders", [])
+            albums = data.get("albums", [])
+            directory = data.get("directory")
+            library = data.get("library", "PrimarySync")
+
+            if not directory:
+                return jsonify({"error": "Directory is required"}), 400
+
+            if not folders and not albums:
+                return jsonify({"error": "At least one folder or album must be selected"}), 400
+
+            # Store download request in status exchange
+            # The download will be initiated by the main process
+            _status_exchange.set_download_request({
+                "folders": folders,
+                "albums": albums,
+                "directory": directory,
+                "library": library
+            })
+
+            # Trigger resume if in watch mode to process the request
+            _status_exchange.get_progress().resume = True
+
+            return jsonify({"status": "Download started"})
+        except Exception as e:
+            logger.error(f"Error starting download: {e}")
+            return jsonify({"error": str(e)}), 500
 
     logger.debug("Starting web server...")
     return waitress.serve(app)

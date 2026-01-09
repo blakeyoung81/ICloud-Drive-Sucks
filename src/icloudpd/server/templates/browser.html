@@ -1,0 +1,346 @@
+<!doctype html>
+<head>
+    <title>iCloud Photos Downloader - Folder Browser</title>
+    <link rel="manifest" href="/static/manifest.json">
+    <meta name="viewport" content="width=device-width, initial-scale=0.8">
+</head>
+<body data-bs-theme="dark" hx-ext="response-targets">
+    <script src="/static/htmx/v2.0.0/htmx.min.js"></script>
+    <script src="/static/htmx/extensions/response-targets.min.js"></script>
+    <link href="/static/style/style.css" rel="stylesheet">
+    <link href="/static/bootstrap/5.3.3/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+    <script src="/static/bootstrap/5.3.3/js/bootstrap.min.js"></script>
+    <script src="/static/js/toast.js"></script>
+    
+    <nav class="navbar bg-body-tertiary">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">iCloud Photos Downloader</a>
+            <a class="btn btn-outline-primary" href="/">Back to Status</a>
+        </div>
+    </nav>
+
+    <div class="container-fluid py-4 px-4">
+        <div class="row">
+            <div class="col-12 mb-4">
+                <h2>Browse and Download Folders</h2>
+            </div>
+        </div>
+
+        <div class="row mb-3">
+            <div class="col-md-6">
+                <label for="library-select" class="form-label">Library</label>
+                <select class="form-select" id="library-select">
+                    <option value="PrimarySync">PrimarySync</option>
+                </select>
+            </div>
+            <div class="col-md-6">
+                <label for="directory-input" class="form-label">Download Directory</label>
+                <input type="text" class="form-control" id="directory-input" placeholder="/path/to/download">
+            </div>
+        </div>
+
+        <div class="row mb-3">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0">Folders</h5>
+                    </div>
+                    <div class="card-body" style="max-height: 500px; overflow-y: auto;">
+                        <div id="folders-loading" class="text-center py-3">
+                            <div class="spinner-border" role="status"></div>
+                            <p class="mt-2">Loading folders...</p>
+                        </div>
+                        <div id="folders-list"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header bg-info text-white">
+                        <h5 class="mb-0">Albums</h5>
+                    </div>
+                    <div class="card-body" style="max-height: 500px; overflow-y: auto;">
+                        <div id="albums-loading" class="text-center py-3">
+                            <div class="spinner-border" role="status"></div>
+                            <p class="mt-2">Loading albums...</p>
+                        </div>
+                        <div id="albums-list"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header bg-success text-white">
+                        <h5 class="mb-0">Selected Items</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="selected-items" class="mb-3">
+                            <p class="text-muted">No items selected</p>
+                        </div>
+                        <button id="download-btn" class="btn btn-success btn-lg" disabled>
+                            <i class="bi bi-download"></i> Start Download
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header bg-secondary text-white">
+                        <h5 class="mb-0">Download Status</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="download-status">
+                            <p class="text-muted">No active downloads</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast-container p-3 top-0 end-0">
+        <div id="toasts" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="toast-header">
+                <svg width="20" height="20" class="rounded me-2">
+                    <rect width="100%" height="100%" fill="#840000"></rect>
+                </svg>
+                <strong class="me-auto">iCloud Photos Downloader</strong>
+                <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+            <div class="toast-body">
+                <div id="toast-content"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let selectedFolders = new Set();
+        let selectedAlbums = new Set();
+        let currentLibrary = 'PrimarySync';
+
+        // Load libraries on page load
+        async function loadLibraries() {
+            try {
+                const response = await fetch('/api/libraries');
+                const data = await response.json();
+                const select = document.getElementById('library-select');
+                select.innerHTML = '';
+                
+                data.private.forEach(lib => {
+                    const option = document.createElement('option');
+                    option.value = lib;
+                    option.textContent = lib;
+                    if (lib === 'PrimarySync') option.selected = true;
+                    select.appendChild(option);
+                });
+                
+                data.shared.forEach(lib => {
+                    const option = document.createElement('option');
+                    option.value = lib;
+                    option.textContent = lib + ' (Shared)';
+                    select.appendChild(option);
+                });
+            } catch (error) {
+                showToast('Error loading libraries: ' + error.message, 'error');
+            }
+        }
+
+        // Load folders
+        async function loadFolders() {
+            const loading = document.getElementById('folders-loading');
+            const list = document.getElementById('folders-list');
+            loading.style.display = 'block';
+            list.innerHTML = '';
+
+            try {
+                const response = await fetch(`/api/folders?library=${currentLibrary}`);
+                const data = await response.json();
+                loading.style.display = 'none';
+
+                if (data.folders && data.folders.length > 0) {
+                    data.folders.forEach(folder => {
+                        const div = document.createElement('div');
+                        div.className = 'form-check mb-2';
+                        div.innerHTML = `
+                            <input class="form-check-input" type="checkbox" value="${folder.name}" id="folder-${folder.name.replace(/[^a-zA-Z0-9]/g, '_')}">
+                            <label class="form-check-label" for="folder-${folder.name.replace(/[^a-zA-Z0-9]/g, '_')}">
+                                ${folder.name} <span class="badge bg-secondary">${folder.count} items</span>
+                            </label>
+                        `;
+                        list.appendChild(div);
+                        
+                        const checkbox = div.querySelector('input');
+                        checkbox.addEventListener('change', (e) => {
+                            if (e.target.checked) {
+                                selectedFolders.add(folder.name);
+                            } else {
+                                selectedFolders.delete(folder.name);
+                            }
+                            updateSelectedItems();
+                        });
+                    });
+                } else {
+                    list.innerHTML = '<p class="text-muted">No folders found</p>';
+                }
+            } catch (error) {
+                loading.style.display = 'none';
+                list.innerHTML = '<p class="text-danger">Error loading folders: ' + error.message + '</p>';
+            }
+        }
+
+        // Load albums
+        async function loadAlbums() {
+            const loading = document.getElementById('albums-loading');
+            const list = document.getElementById('albums-list');
+            loading.style.display = 'block';
+            list.innerHTML = '';
+
+            try {
+                const response = await fetch(`/api/albums?library=${currentLibrary}`);
+                const data = await response.json();
+                loading.style.display = 'none';
+
+                if (data.albums && data.albums.length > 0) {
+                    data.albums.forEach(album => {
+                        const div = document.createElement('div');
+                        div.className = 'form-check mb-2';
+                        div.innerHTML = `
+                            <input class="form-check-input" type="checkbox" value="${album.name}" id="album-${album.name.replace(/[^a-zA-Z0-9]/g, '_')}">
+                            <label class="form-check-label" for="album-${album.name.replace(/[^a-zA-Z0-9]/g, '_')}">
+                                ${album.name} <span class="badge bg-secondary">${album.count} items</span>
+                            </label>
+                        `;
+                        list.appendChild(div);
+                        
+                        const checkbox = div.querySelector('input');
+                        checkbox.addEventListener('change', (e) => {
+                            if (e.target.checked) {
+                                selectedAlbums.add(album.name);
+                            } else {
+                                selectedAlbums.delete(album.name);
+                            }
+                            updateSelectedItems();
+                        });
+                    });
+                } else {
+                    list.innerHTML = '<p class="text-muted">No albums found</p>';
+                }
+            } catch (error) {
+                loading.style.display = 'none';
+                list.innerHTML = '<p class="text-danger">Error loading albums: ' + error.message + '</p>';
+            }
+        }
+
+        // Update selected items display
+        function updateSelectedItems() {
+            const container = document.getElementById('selected-items');
+            const downloadBtn = document.getElementById('download-btn');
+            
+            const items = [];
+            selectedFolders.forEach(f => items.push({type: 'folder', name: f}));
+            selectedAlbums.forEach(a => items.push({type: 'album', name: a}));
+
+            if (items.length === 0) {
+                container.innerHTML = '<p class="text-muted">No items selected</p>';
+                downloadBtn.disabled = true;
+            } else {
+                container.innerHTML = items.map(item => 
+                    `<span class="badge bg-${item.type === 'folder' ? 'primary' : 'info'} me-2 mb-2">${item.type === 'folder' ? '📁' : '📷'} ${item.name}</span>`
+                ).join('');
+                downloadBtn.disabled = false;
+            }
+        }
+
+        // Start download
+        async function startDownload() {
+            const directory = document.getElementById('directory-input').value.trim();
+            if (!directory) {
+                showToast('Please enter a download directory', 'error');
+                return;
+            }
+
+            if (selectedFolders.size === 0 && selectedAlbums.size === 0) {
+                showToast('Please select at least one folder or album', 'error');
+                return;
+            }
+
+            const downloadBtn = document.getElementById('download-btn');
+            downloadBtn.disabled = true;
+            downloadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Starting...';
+
+            try {
+                const response = await fetch('/api/download', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        folders: Array.from(selectedFolders),
+                        albums: Array.from(selectedAlbums),
+                        directory: directory,
+                        library: currentLibrary
+                    })
+                });
+
+                const data = await response.json();
+                if (response.ok) {
+                    showToast('Download started successfully!', 'success');
+                    document.getElementById('download-status').innerHTML = `
+                        <div class="alert alert-info">
+                            <strong>Download in progress:</strong><br>
+                            Folders: ${Array.from(selectedFolders).join(', ') || 'None'}<br>
+                            Albums: ${Array.from(selectedAlbums).join(', ') || 'None'}<br>
+                            Directory: ${directory}
+                        </div>
+                    `;
+                } else {
+                    showToast('Error: ' + (data.error || 'Unknown error'), 'error');
+                }
+            } catch (error) {
+                showToast('Error starting download: ' + error.message, 'error');
+            } finally {
+                downloadBtn.disabled = false;
+                downloadBtn.innerHTML = '<i class="bi bi-download"></i> Start Download';
+            }
+        }
+
+        // Show toast notification
+        function showToast(message, type) {
+            const toastContent = document.getElementById('toast-content');
+            const toast = document.getElementById('toasts');
+            toastContent.textContent = message;
+            
+            const toastHeader = toast.querySelector('.toast-header');
+            if (type === 'error') {
+                toastHeader.querySelector('svg rect').setAttribute('fill', '#840000');
+            } else {
+                toastHeader.querySelector('svg rect').setAttribute('fill', '#198754');
+            }
+            
+            const bsToast = new bootstrap.Toast(toast);
+            bsToast.show();
+        }
+
+        // Event listeners
+        document.getElementById('library-select').addEventListener('change', (e) => {
+            currentLibrary = e.target.value;
+            loadFolders();
+            loadAlbums();
+        });
+
+        document.getElementById('download-btn').addEventListener('click', startDownload);
+
+        // Initial load
+        loadLibraries();
+        loadFolders();
+        loadAlbums();
+    </script>
+</body>
+</html>
